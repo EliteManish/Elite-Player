@@ -1,0 +1,8 @@
+{
+  "name": "Remix: Remix: AndroidStream Web",
+  "description": "A modern, high-performance streaming app for HLS/M3U8 content with favorites, search, and picture-in-picture support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
