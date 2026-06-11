@@ -64,6 +64,9 @@ async function startServer() {
     res.json({ status: "ok", version: "1.0.5", time: new Date().toISOString() });
   });
 
+  // Serve compiled SDK endpoints in both development and production
+  app.use("/sdk", express.static(path.join(process.cwd(), "dist/sdk")));
+
   // Static files and SPA fallback
   const distPath = path.join(process.cwd(), "dist");
   

@@ -101,8 +101,8 @@ export function Docs({ onBack }: DocsProps) {
           <h2 className="text-3xl font-bold tracking-tight">Core Features</h2>
           <ul className="grid grid-cols-1 gap-4">
             {[
-              { t: 'Multi-Format Support', d: 'Native support for HLS (.m3u8), MP4, WebM, and Ogg.' },
-              { t: 'Adaptive Bitrate', d: 'Automatic quality switching based on network conditions via HLS.js.' },
+              { t: 'Multi-Format Support', d: 'Native, comprehensive support for HLS (.m3u8), DASH (.mpd), MPEG-TS (.ts), FLV (.flv), MP4, WebM, and P2P WebTorrent (.torrent / Magnet).' },
+              { t: 'Adaptive Bitrate', d: 'Automatic quality switching based on live network conditions via HLS.js and DASH.js.' },
               { t: 'Custom controls', d: 'Fully built with React components and Tailwind CSS for easy modification.' },
               { t: 'OLED/Dark Mode', d: 'Specialized "Brilliant Mode" for deep contrast on professional displays.' },
               { t: 'Gesture Support', d: 'Double-tap to seek, long-press for lock, and swipe for volume/brightness.' },
@@ -197,26 +197,188 @@ export default {
     },
     {
       id: 'cdn-usage',
-      title: 'CDN Usage',
+      title: 'Browser SDK & CDN',
       icon: <Globe size={18} />,
       content: (
         <div className="space-y-6">
-          <h2 className="text-3xl font-bold tracking-tight">CDN Usage</h2>
-          <p className="text-white/60">For non-React projects, you can use the pre-bundled CDN version.</p>
+          <h2 className="text-3xl font-bold tracking-tight">Browser SDK / CDN Usage</h2>
+          <p className="text-white/60">
+            For standard HTML/JS websites or non-React frameworks, Elite Player exposes a Video.js-styled, fully functional Browser SDK wrapper (<code className="text-blue-400">ElitePlayer</code>) ready to mount directly in your DOM. It supports multiple instances, full event hooks, and direct stream management.
+          </p>
+
+          <h3 className="text-xl font-bold text-white mt-8 mb-4">Quick Start Setup</h3>
+          <p className="text-white/60">
+            Include the consolidated script and stylesheet directly from your CDN/hosting, create a container element, and initialize the player:
+          </p>
           <CodeBlock 
             language="html"
-            code={`<script src="https://cdn.jsdelivr.net/npm/elite-player@latest/dist/elite-player.min.js"></script>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/elite-player@latest/dist/style.css">
+            code={`<!-- Include Elite Player SDK Stylesheet -->
+<link rel="stylesheet" href="/sdk/elite-player.min.css">
 
-<div id="player-container"></div>
+<!-- Video container element -->
+<div id="player-container" style="width: 100%; max-width: 800px; aspect-ratio: 16/9;"></div>
+
+<!-- Include Elite Player SDK Library -->
+<script src="/sdk/elite-player.min.js"></script>
 
 <script>
-  ElitePlayer.init('#player-container', {
-    url: 'https://example.com/stream.m3u8',
-    title: 'CDN Stream'
+  // Initialise Elite Player using ElitePlayer.create or raw constructor
+  const player = ElitePlayer.create('#player-container', {
+    source: 'https://cdn.rawgit.com/streamlink/streamlink/master/tests/streams/hls/playlist.m3u8',
+    title: 'Cinematic Demo Stream',
+    category: 'CDN LIVE STREAM',
+    language: 'English'
+  });
+
+  // Bind to playback events
+  player.on('ready', () => {
+    console.log('Player is ready for playback!');
+  });
+
+  player.on('play', () => {
+    console.log('Video has started playing');
+  });
+
+  player.on('timeupdate', (currentTime) => {
+    console.log('Playback progress time:', currentTime.toFixed(2));
   });
 </script>`}
           />
+
+          <h3 className="text-xl font-bold text-white mt-8 mb-4">Instance Options Configuration</h3>
+          <p className="text-white/60">
+            The <code className="text-blue-400">ElitePlayer</code> options argument accepts the following options:
+          </p>
+          <div className="overflow-x-auto border border-white/5 rounded-2xl bg-white/5">
+            <table className="w-full text-left text-sm border-collapse">
+              <thead>
+                <tr className="border-b border-white/10 bg-white/5 text-xs uppercase text-white/50 font-bold">
+                  <th className="p-4">Key</th>
+                  <th className="p-4">Type</th>
+                  <th className="p-4">Description</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 text-white/70">
+                <tr>
+                  <td className="p-4 font-mono text-blue-400">source / url</td>
+                  <td className="p-4 font-mono text-purple-400">string</td>
+                  <td className="p-4">The streaming source URL (HLS, DASH, TS, FLV, Magnet/Torrent, or MP4/WebM).</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-blue-400">title</td>
+                  <td className="p-4 font-mono text-purple-400">string</td>
+                  <td className="p-4">Dynamic title displayed in the top bar overlay metadata.</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-blue-400">category</td>
+                  <td className="p-4 font-mono text-purple-400">string</td>
+                  <td className="p-4">Subtitle header overlay category metadata (defaults to 'Video Stream').</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-blue-400">language</td>
+                  <td className="p-4 font-mono text-purple-400">string</td>
+                  <td className="p-4">Starting language track metadata descriptor (e.g. 'English').</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-blue-400">poster</td>
+                  <td className="p-4 font-mono text-purple-400">string</td>
+                  <td className="p-4">Fallback poster image URL while buffering.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <h3 className="text-xl font-bold text-white mt-8 mb-4">Controlling Methods API</h3>
+          <p className="text-white/60">
+            Use public standard methods on your returned player instance object directly to control playback actions:
+          </p>
+          <CodeBlock 
+            language="javascript"
+            code={`// Programmatic playback control
+player.play();
+player.pause();
+
+// Seek to 1 minute 30 seconds
+player.seek(90);
+
+// Set volume level (0.0 to 1.0)
+player.setVolume(0.85);
+
+// Audio mute methods
+player.mute();
+player.unmute();
+
+// Inspect playback status
+console.log('Current playhead position:', player.getCurrentTime());
+console.log('Total stream duration:', player.getDuration());
+
+// Go fullscreen
+player.enterFullscreen();
+
+// Dynamic stream loading on physical container reuse
+player.load('https://example.com/another-source.mpd', 'New DASH Title');
+
+// Clean up player on client routing (unmounts React engine nodes seamlessly)
+player.destroy();`}
+          />
+
+          <h3 className="text-xl font-bold text-white mt-8 mb-4">Event Dispatching Listeners</h3>
+          <p className="text-white/60">
+            Interact with reactive stream updates by registering standard hooks on <code className="text-blue-400">player.on(event, cb)</code>:
+          </p>
+          <div className="overflow-x-auto border border-white/5 rounded-2xl bg-white/5">
+            <table className="w-full text-left text-sm border-collapse">
+              <thead>
+                <tr className="border-b border-white/10 bg-white/5 text-xs uppercase text-white/50 font-bold">
+                  <th className="p-4">Event Name</th>
+                  <th className="p-4">Callback Parameter</th>
+                  <th className="p-4">Description</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-white/5 text-white/70">
+                <tr>
+                  <td className="p-4 font-mono text-green-400">"ready"</td>
+                  <td className="p-4 font-mono text-white/40">void</td>
+                  <td className="p-4">Triggered when metadata parses, buffering yields, and streaming mounts successfully.</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-green-400">"play"</td>
+                  <td className="p-4 font-mono text-white/40">void</td>
+                  <td className="p-4">Fires when video transitions to isPlaying = true state.</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-green-400">"pause"</td>
+                  <td className="p-4 font-mono text-white/40">void</td>
+                  <td className="p-4">Fires when video transitions to paused state.</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-green-400">"timeupdate"</td>
+                  <td className="p-4 font-mono text-purple-400">number</td>
+                  <td className="p-4">Yields current accurate currentTime float updates on playhead movement.</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-green-400">"ended"</td>
+                  <td className="p-4 font-mono text-white/40">void</td>
+                  <td className="p-4">Fires when stream playhead reaches the physical end of media duration.</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-green-400">"fullscreenchange"</td>
+                  <td className="p-4 font-mono text-purple-400">boolean</td>
+                  <td className="p-4">Emits true when coming into fullscreen overlay, false when exiting.</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-green-400">"qualitychange"</td>
+                  <td className="p-4 font-mono text-purple-400">number</td>
+                  <td className="p-4">Returns index of HLS or DASH stream quality selected (or -1 for automatic ABR level).</td>
+                </tr>
+                <tr>
+                  <td className="p-4 font-mono text-green-400">"error"</td>
+                  <td className="p-4 font-mono text-red-400">any</td>
+                  <td className="p-4">Dispatches buffer parsing issues or network source delivery errors.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       )
     },
@@ -281,15 +443,46 @@ export default {
       icon: <Layers size={18} />,
       content: (
         <div className="space-y-6">
-          <h2 className="text-3xl font-bold tracking-tight">MPEG-DASH</h2>
-          <p className="text-white/60">DASH support is available via the dash.js plugin. Currently in experimental phase.</p>
+          <h2 className="text-3xl font-bold tracking-tight">MPEG-DASH Support</h2>
+          <p className="text-white/60">Elite Player includes built-in, native support for MPEG-DASH streaming (.mpd manifests) powered by the robust dash.js library. Adaptive bitrate streaming, quality switching, and loading states are handled automatically.</p>
           <CodeBlock 
-            code={`import { Player } from 'elite-player-react';
-import { DashPlugin } from 'elite-player-dash'; // Optional package
-
-<Player 
-  url="https://example.com/manifest.mpd"
-  plugins={[DashPlugin()]}
+            code={`<Player 
+  url="https://dash.akamaized.net/envivio/EnvivioDash3/manifest.mpd"
+  title="DASH Showcase Stream"
+/>`}
+          />
+        </div>
+      )
+    },
+    {
+      id: 'webtorrent-support',
+      title: 'WebTorrent Support',
+      icon: <Link size={18} />,
+      content: (
+        <div className="space-y-6">
+          <h2 className="text-3xl font-bold tracking-tight">P2P WebTorrent Support</h2>
+          <p className="text-white/60">Elite Player incorporates fully-integrated Peer-to-Peer torrent streaming. You can stream media files directly from bittorrent networks, magnet links, or `.torrent` file URLs dynamically using WebTorrent in the browser.</p>
+          <CodeBlock 
+            code={`<Player 
+  url="magnet:?xt=urn:btih:08ada5a7a6183aae1e09d831df6748d566095a10&dn=Sintel"
+  title="Sintel open movie torrent"
+/>`}
+          />
+        </div>
+      )
+    },
+    {
+      id: 'mpegts-flv-support',
+      title: 'MPEG-TS & FLV Support',
+      icon: <Cpu size={18} />,
+      content: (
+        <div className="space-y-6">
+          <h2 className="text-3xl font-bold tracking-tight">MPEG-TS & FLV Support</h2>
+          <p className="text-white/60">Elite Player has integrated `mpegts.js` support, allowing you to stream low-latency container formats such as HTTP FLV and raw MPEG-TS (.ts) formats on modern browsers without specialized extensions.</p>
+          <CodeBlock 
+            code={`<Player 
+  url="https://example.com/live/stream.ts"
+  title="Low Latency MPEG-TS Stream"
 />`}
           />
         </div>

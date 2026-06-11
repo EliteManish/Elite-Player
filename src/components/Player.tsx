@@ -1,5 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react';
 import Hls from 'hls.js';
+import * as dashjs from 'dashjs';
+import mpegts from 'mpegts.js';
 import { 
   Maximize, Minimize, Pause, Play, Volume2, VolumeX, Settings, 
   PictureInPicture, RotateCcw, RotateCw, Lock, Unlock, Download, 
@@ -8,7 +10,21 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { cn } from '../lib/utils';
 
-interface PlayerProps {
+export interface PlayerAPI {
+  play: () => Promise<void> | void;
+  pause: () => void;
+  seek: (seconds: number) => void;
+  mute: () => void;
+  unmute: () => void;
+  setVolume: (value: number) => void;
+  getCurrentTime: () => number;
+  getDuration: () => number;
+  enterFullscreen: () => void;
+  exitFullscreen: () => void;
+  load: (url: string, title?: string) => void;
+}
+
+export interface PlayerProps {
   url: string;
   title?: string;
   category?: string;
@@ -17,15 +33,36 @@ interface PlayerProps {
   language?: string;
   onEnded?: () => void;
   onError?: (error: any) => void;
+  onReady?: () => void;
+  onPlay?: () => void;
+  onPause?: () => void;
+  onTimeUpdate?: (currentTime: number) => void;
+  onFullscreenChange?: (isFullscreen: boolean) => void;
+  onQualityChange?: (quality: any) => void;
 }
 
-export const Player: React.FC<PlayerProps> = ({ 
-  url, title, category, poster, year = '2024', language = 'Hindi', onEnded, onError 
-}) => {
+export const Player = forwardRef<PlayerAPI, PlayerProps>(({ 
+  url, title, category, poster, year = '2024', language = 'Hindi', 
+  onEnded, onError, onReady, onPlay, onPause, onTimeUpdate, onFullscreenChange, onQualityChange
+}, ref) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const dashRef = useRef<any>(null);
+  const mpegtsRef = useRef<any>(null);
+  const torrentClientRef = useRef<any>(null);
   
+  const [currentUrl, setCurrentUrl] = useState(url);
+  const [currentTitle, setCurrentTitle] = useState(title || '');
+
+  useEffect(() => {
+    setCurrentUrl(url);
+  }, [url]);
+
+  useEffect(() => {
+    setCurrentTitle(title || '');
+  }, [title]);
+
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(1);
   const [isMuted, setIsMuted] = useState(false);
@@ -61,12 +98,95 @@ export const Player: React.FC<PlayerProps> = ({
     }
   }, [volume]);
 
+  useImperativeHandle(ref, () => ({
+    play: async () => {
+      const video = videoRef.current;
+      if (video) {
+        try {
+          await video.play();
+        } catch (err) {
+          console.error("SDK Play failed", err);
+        }
+      }
+    },
+    pause: () => {
+      const video = videoRef.current;
+      if (video) {
+        video.pause();
+      }
+    },
+    seek: (seconds: number) => {
+      const video = videoRef.current;
+      if (video) {
+        video.currentTime = seconds;
+      }
+    },
+    mute: () => {
+      setIsMuted(true);
+    },
+    unmute: () => {
+      setIsMuted(false);
+    },
+    setVolume: (value: number) => {
+      const clamped = Math.max(0, Math.min(1, value));
+      setVolume(clamped);
+      setIsMuted(clamped === 0);
+    },
+    getCurrentTime: () => {
+      return videoRef.current ? videoRef.current.currentTime : 0;
+    },
+    getDuration: () => {
+      return videoRef.current ? videoRef.current.duration : 0;
+    },
+    enterFullscreen: () => {
+      if (containerRef.current && !document.fullscreenElement) {
+        containerRef.current.requestFullscreen().catch((err) => {
+          console.error("Fullscreen request failed", err);
+        });
+        setIsFullscreen(true);
+      }
+    },
+    exitFullscreen: () => {
+      if (document.fullscreenElement) {
+        document.exitFullscreen();
+        setIsFullscreen(false);
+      }
+    },
+    load: (newUrl: string, newTitle?: string) => {
+      setCurrentUrl(newUrl);
+      if (newTitle !== undefined) {
+        setCurrentTitle(newTitle);
+      }
+    }
+  }));
+
+  useEffect(() => {
+    if (!isLoading) {
+      onReady?.();
+    }
+  }, [isLoading, onReady]);
+
+  useEffect(() => {
+    const handleFsChange = () => {
+      const isFs = !!document.fullscreenElement;
+      setIsFullscreen(isFs);
+      onFullscreenChange?.(isFs);
+    };
+    document.addEventListener('fullscreenchange', handleFsChange);
+    return () => {
+      document.removeEventListener('fullscreenchange', handleFsChange);
+    };
+  }, [onFullscreenChange]);
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
     let hls: Hls | null = null;
     setIsLoading(true);
+    setQualities([]);
+    setAudioTracks([]);
+    setCurrentQualityIndex(-1);
 
     const playVideo = async () => {
       if (!video) return;
@@ -80,11 +200,138 @@ export const Player: React.FC<PlayerProps> = ({
       }
     };
 
-    if (url.includes('.m3u8') || url.includes('m3u8')) {
+    // 1. DASH Support (.mpd)
+    if (currentUrl.includes('.mpd') || currentUrl.includes('mpd')) {
+      const dashPlayer: any = dashjs.MediaPlayer().create();
+      dashRef.current = dashPlayer;
+      dashPlayer.initialize(video, currentUrl, true);
+
+      dashPlayer.on(dashjs.MediaPlayer.events.CAN_PLAY, () => {
+        setIsLoading(false);
+        playVideo();
+      });
+
+      dashPlayer.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+        const bitrates = dashPlayer.getBitrateInfoListFor('video');
+        if (bitrates && bitrates.length > 0) {
+          const mappedQualities = bitrates.map((b: any, i: number) => ({
+            height: b.height || 0,
+            index: i
+          }));
+          setQualities(mappedQualities);
+        }
+      });
+
+      dashPlayer.on(dashjs.MediaPlayer.events.ERROR, (e: any) => {
+        console.error("DASH error:", e);
+        onError?.(e);
+      });
+    }
+    // 2. WebTorrent Support (.torrent or magnet:)
+    else if (currentUrl.endsWith('.torrent') || currentUrl.includes('torrent') || currentUrl.startsWith('magnet:')) {
+      const loadWebTorrent = (): Promise<any> => {
+        return new Promise((resolve, reject) => {
+          if ((window as any).WebTorrent) {
+            resolve((window as any).WebTorrent);
+            return;
+          }
+          const script = document.createElement('script');
+          script.src = 'https://cdn.jsdelivr.net/npm/webtorrent@2/webtorrent.min.js';
+          script.async = true;
+          script.onload = () => {
+            resolve((window as any).WebTorrent);
+          };
+          script.onerror = (err) => {
+            reject(err);
+          };
+          document.body.appendChild(script);
+        });
+      };
+
+      loadWebTorrent().then((WT) => {
+        if (!video) return;
+        const client = new WT();
+        torrentClientRef.current = client;
+
+        client.add(currentUrl, (torrent: any) => {
+          const file = torrent.files.find((f: any) => 
+            f.name.endsWith('.mp4') || 
+            f.name.endsWith('.webm') || 
+            f.name.endsWith('.mkv') || 
+            f.name.endsWith('.mov')
+          );
+          if (file) {
+            file.renderTo(video, {}, (err: any) => {
+              if (err) {
+                console.error("WebTorrent render error:", err);
+                onError?.(err);
+              } else {
+                setIsLoading(false);
+                playVideo();
+              }
+            });
+          } else {
+            console.error("No playable video file found in torrent.");
+            onError?.(new Error("No playable video file found in torrent."));
+          }
+
+          torrent.on('error', (err: any) => {
+            console.error("Torrent error:", err);
+            onError?.(err);
+          });
+        });
+
+        client.on('error', (err: any) => {
+          console.error("WebTorrent client error:", err);
+          onError?.(err);
+        });
+      }).catch(err => {
+        console.error("WebTorrent script loading failed:", err);
+        onError?.(err);
+      });
+    }
+    // 3. MPEG-TS / FLV Support (.ts, .flv)
+    else if (currentUrl.includes('.flv') || currentUrl.includes('.ts') || currentUrl.includes('flv') || currentUrl.endsWith('.ts')) {
+      if (mpegts.isSupported()) {
+        const mpegtsPlayer = mpegts.createPlayer({
+          type: (currentUrl.includes('.flv') || currentUrl.includes('flv')) ? 'flv' : 'mpegts',
+          url: currentUrl,
+          isLive: true
+        });
+        mpegtsRef.current = mpegtsPlayer;
+        mpegtsPlayer.attachMediaElement(video);
+        mpegtsPlayer.load();
+        const playResult = mpegtsPlayer.play();
+        if (playResult instanceof Promise) {
+          playResult.then(() => {
+            setIsLoading(false);
+          }).catch((err: any) => {
+            console.error("mpegts playback error:", err);
+            setIsPlaying(false);
+          });
+        } else {
+          setIsLoading(false);
+        }
+
+        mpegtsPlayer.on(mpegts.Events.ERROR, (type: any, detail: any, info: any) => {
+          console.error("mpegts playback error:", type, detail, info);
+          onError?.(new Error(`MPEG-TS/FLV Playback error: ${type} - ${detail}`));
+        });
+      } else {
+        video.src = currentUrl;
+        video.addEventListener('loadedmetadata', () => {
+          setIsLoading(false);
+          setDuration(video.duration);
+          playVideo();
+        });
+      }
+    }
+    // 4. HLS Support (.m3u8)
+    else if (currentUrl.includes('.m3u8') || currentUrl.includes('m3u8')) {
       if (Hls.isSupported()) {
         hls = new Hls({ enableWorker: true, lowLatencyMode: true });
         hlsRef.current = hls;
-        hls.loadSource(url);
+        hls.loadSource(currentUrl);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setIsLoading(false);
@@ -100,11 +347,14 @@ export const Player: React.FC<PlayerProps> = ({
           setCurrentAudioIndex(data.id);
         });
         hls.on(Hls.Events.LEVEL_SWITCHED, (_, data) => {
+          let lvl = data.level;
           if (hls?.autoLevelEnabled) {
                setCurrentQualityIndex(-1);
+               lvl = -1;
           } else {
                setCurrentQualityIndex(data.level);
           }
+          onQualityChange?.(lvl);
         });
         hls.on(Hls.Events.ERROR, (_, data) => {
           if (data.fatal) {
@@ -116,7 +366,7 @@ export const Player: React.FC<PlayerProps> = ({
           }
         });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url;
+        video.src = currentUrl;
         video.addEventListener('loadedmetadata', () => {
           setIsLoading(false);
           playVideo();
@@ -124,7 +374,7 @@ export const Player: React.FC<PlayerProps> = ({
       }
     } else {
       // Standard video fallback (MP4, WebM, etc)
-      video.src = url;
+      video.src = currentUrl;
       video.addEventListener('loadedmetadata', () => {
         setIsLoading(false);
         setDuration(video.duration);
@@ -135,30 +385,84 @@ export const Player: React.FC<PlayerProps> = ({
       });
     }
 
-    const timeUpdate = () => setCurrentTime(video.currentTime);
+    const timeUpdate = () => {
+      setCurrentTime(video.currentTime);
+      onTimeUpdate?.(video.currentTime);
+    };
     const durationChange = () => setDuration(video.duration);
-    const playState = () => setIsPlaying(true);
-    const pauseState = () => setIsPlaying(false);
+    const playState = () => {
+      setIsPlaying(true);
+      onPlay?.();
+    };
+    const pauseState = () => {
+      setIsPlaying(false);
+      onPause?.();
+    };
+    const endedState = () => {
+      onEnded?.();
+    };
 
     video.addEventListener('timeupdate', timeUpdate);
     video.addEventListener('durationchange', durationChange);
     video.addEventListener('play', playState);
     video.addEventListener('pause', pauseState);
+    video.addEventListener('ended', endedState);
 
     return () => {
       if (hls) hls.destroy();
       hlsRef.current = null;
+      if (dashRef.current) {
+        dashRef.current.destroy();
+        dashRef.current = null;
+      }
+      if (mpegtsRef.current) {
+        mpegtsRef.current.unload();
+        mpegtsRef.current.detachMediaElement();
+        mpegtsRef.current.destroy();
+        mpegtsRef.current = null;
+      }
+      if (torrentClientRef.current) {
+        torrentClientRef.current.destroy();
+        torrentClientRef.current = null;
+      }
       video.removeEventListener('timeupdate', timeUpdate);
       video.removeEventListener('durationchange', durationChange);
       video.removeEventListener('play', playState);
       video.removeEventListener('pause', pauseState);
+      video.removeEventListener('ended', endedState);
     };
-  }, [url]);
+  }, [currentUrl]);
 
   const handleQualityChange = (index: number) => {
     if (hlsRef.current) {
       hlsRef.current.currentLevel = index;
       setCurrentQualityIndex(index);
+      onQualityChange?.(index);
+    } else if (dashRef.current) {
+      if (index === -1) {
+        dashRef.current.updateSettings({
+          streaming: {
+            abr: {
+              autoSwitchBitrate: {
+                video: true
+              }
+            }
+          }
+        });
+      } else {
+        dashRef.current.updateSettings({
+          streaming: {
+            abr: {
+              autoSwitchBitrate: {
+                video: false
+              }
+            }
+          }
+        });
+        dashRef.current.setQualityFor('video', index, true);
+      }
+      setCurrentQualityIndex(index);
+      onQualityChange?.(index);
     }
   };
 
@@ -384,7 +688,7 @@ export const Player: React.FC<PlayerProps> = ({
                 <div>
                   <div className="flex items-center gap-2">
                     <h1 className="text-white text-sm sm:text-base md:text-2xl font-bold tracking-tight drop-shadow-lg uppercase leading-tight truncate max-w-[250px] sm:max-w-md md:max-w-4xl">
-                      {title}
+                      {currentTitle}
                     </h1>
                   </div>
                   <div className="flex items-center gap-2 mt-1">
@@ -680,7 +984,7 @@ export const Player: React.FC<PlayerProps> = ({
       </AnimatePresence>
     </div>
   );
-};
+});
 
 const SettingItem: React.FC<{ icon: React.ReactNode, label: string, value: string, onClick?: () => void }> = ({ icon, label, value, onClick }) => (
   <button 
